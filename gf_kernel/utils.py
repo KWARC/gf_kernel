@@ -119,3 +119,8 @@ def get_matches(last_word):
         if regex.match(word):
             matches.append(word)
     return matches
+
+
+def get_name(command):
+    """returns the name of the command"""
+    return command.split(' ')[0]

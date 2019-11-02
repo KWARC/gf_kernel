@@ -3,41 +3,73 @@ import os
 import signal
 import time
 import re
+import io
 
 from subprocess import PIPE, Popen
 from IPython.utils.tempdir import TemporaryDirectory
-from .utils import readFile, parse, parse_command, to_message_format
+from distutils.spawn import find_executable
+from .utils import readFile, parse, parse_command, to_message_format, get_name
 
+
+COMMAND_SEPARATOR = "COMMAND_SEPARATOR===??!<>239'_"
 
 class GFRepl:
-
-    def __init__(self, GF_BIN):
-        self.GF_BIN = GF_BIN
-
-        GF_ARGS = [
-            GF_BIN,
-            '--run'
-        ]
-
+    def __init__(self):
         self.td = TemporaryDirectory()
         self.to_clean_up = ['.dot', '.png', '.gfo']
-        self.out_file_name = os.path.join(self.td.name, 'shell.out')
-        self.out = open(self.out_file_name, 'w+')
-        self.shell = Popen(GF_ARGS, stdin=PIPE,
-                           stdout=self.out, stderr=self.out)
-        self.pid = os.getpid()
+
+        self.pipe = os.pipe()
+        self.gf_shell = Popen((find_executable('gf'), '--run'),
+                          stdin = PIPE,
+                          stderr = self.pipe[1],
+                          stdout = self.pipe[1],
+                          text = True)
+        self.commandcounter = 0
+        self.infile = os.fdopen(self.pipe[0])
+
+        # catch any initial messages
+        sep = self.write_separator()
+        self.gf_shell.stdin.flush()
+        self.initialOutput = self.get_output(sep)
+        
         self.out_count = 0
 
-        # register the signal handler for the notify process
-        signal.signal(signal.SIGUSR1, self.signal_handler)
-
     def do_shutdown(self):
-        "Terminates the GF shell"
-        self.td.cleanup()
-        self.shell.stdin.write(b'q')
-        self.shell.communicate()[0]
-        self.shell.stdin.close()
-        self.shell.kill()
+        """Terminates the GF shell. """
+        self.gf_shell.communicate('q\n')[0]
+        self.gf_shell.stdin.close()
+        self.gf_shell.kill()
+
+    # -------------------------- GF shell communication -------------------------- #
+
+    def write_cmd(self, cmd):
+        if not cmd.endswith('\n'):
+            cmd += '\n'
+        self.gf_shell.stdin.write(cmd)
+        self.commandcounter += 1
+
+    def write_separator(self):
+        sep = COMMAND_SEPARATOR + str(self.commandcounter)
+        self.gf_shell.stdin.write(f"ps \"{sep}\"\n")
+        return sep
+
+    def get_output(self, sep):
+        """Reads lines until sep found"""
+        output = ""
+        for line in self.infile:
+            if line.rstrip() == sep:
+                return output
+            if line != '\n':  # ignore empty lines
+                output += line
+
+    def handle_gf_command(self, cmd):
+        """Forwards a command to the GF Shell and returns the output"""
+        self.write_cmd(cmd)
+        sep = self.write_separator()
+        self.gf_shell.stdin.flush()
+        return self.get_output(sep)
+
+    # ------------------------------ Kernel commands ----------------------------- #
 
     def clean_up(self):
         """Removes all files whose extensions are contained in `self.to_clean_up`"""
@@ -94,7 +126,7 @@ Otherwise you can use the kernel as an editor for your grammars.
 Stated grammars are automatically imported upon definiton.""" % (", ".join(self.to_clean_up))))
                     else:
                         cmd = '%s %s' % (name, args)
-                        msg = self.handle_shell_input(cmd)
+                        msg = self.handle_gf_command(cmd)
                         if name == 'import' and not msg:
                             messages.append(to_message_format(
                                 message='Import successful!'))
@@ -113,10 +145,10 @@ Stated grammars are automatically imported upon definiton.""" % (", ".join(self.
     def handle_grammar(self, grammar, name):
         """Handles a grammar imput"""
         file_path = "%s.gf" % (os.path.join(self.td.name, name))
-        with open(file_path, 'w') as f:
+        with io.open(file_path, 'w', encoding='utf-8') as f:
             f.write(grammar)
             f.close()
-        out = self.handle_shell_input(
+        out = self.handle_gf_command(
             "import %s.gf" % (os.path.join(self.td.name, name)))
         if not out:
             out = "Defined %s" % (name)
@@ -127,7 +159,7 @@ Stated grammars are automatically imported upon definiton.""" % (", ".join(self.
         cmd = parse_command(command)
         if cmd['tree_type']:
             raw_command = cmd['cmd']
-            out = self.handle_shell_input(raw_command)
+            out = self.handle_gf_command(raw_command)
             lines = out.split('\n')
             trees = []
             for line in lines:
@@ -145,7 +177,7 @@ Stated grammars are automatically imported upon definiton.""" % (", ".join(self.
             Sends the `command` to the GF shell and converts the output to a .png file
             returns the name of the .png file
         """
-        out = self.handle_shell_input(command)
+        out = self.handle_gf_command(command)
         if not out:
             return "no file"
 
@@ -167,49 +199,14 @@ Stated grammars are automatically imported upon definiton.""" % (", ".join(self.
 
         return out_png
 
-    def handle_shell_input(self, code):
-        """Sends the `code` to the GF shell"""
-
-        if self.out.closed:
-            self.out = open(self.out_file_name, 'w')
-
-        cp_s = self.out.tell()
-
-        # send the command
-        code = code+'\n'
-        self.shell.stdin.write(code.encode())
-        self.shell.stdin.flush()
-
-        # start the notify process
-        cmd = 'sp -command=\"python %s/notify.py %s\"\n' % (
-            os.path.dirname(os.path.abspath(__file__)), self.pid)
-        self.shell.stdin.write(cmd.encode())
-        self.shell.stdin.flush()
-
-        # wait for the notify process
-        signal.pause()
-
-        # some shell commands (mostly the ones that are dealing with files) are asynchronous from the shells execution,
-        # like e.g. searching a file to include. This means the notify process can report back even though the shell
-        # hasn't actually written its output to the output file yet. Hence we need to wait a little here to be sure the output is there.
-        time.sleep(0.2)
-        out = readFile(self.out_file_name, cp_s).replace('ExitFailure 1', '')
-
-        return out
-
     def start(self):
         """Starts the REPL"""
         i = sys.stdin.readline()
         while i and i != 'quit\n' and i != 'q\n':
             # send input without the newline
-            print(self.handle_shell_input(i[:-1]))
+            print(self.handle_gf_command(i[:-1]))
             i = sys.stdin.readline()
 
-    def signal_handler(self, signum, frame):
-        """Signal handler for the notify process"""
-        pass
-
-
 if __name__ == '__main__':
-    repl = GFRepl('/usr/bin/gf')
+    repl = GFRepl()
     repl.start()

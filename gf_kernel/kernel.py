@@ -14,8 +14,6 @@ from ipykernel.comm import CommManager
 from ipykernel.zmqshell import ZMQInteractiveShell
 from distutils.spawn import find_executable
 
-GF_BIN = find_executable('gf')
-
 # ----------------------------------  KERNEL  ----------------------------------
 
 
@@ -77,7 +75,7 @@ class GFKernel(Kernel):
                 self.comm_manager, msg_type)
 
         # initialize the GFRepl
-        self.GFRepl = GFRepl(GF_BIN)
+        self.GFRepl = GFRepl()
 
     def start(self):
         self.shell.exit_now = False
@@ -124,6 +122,7 @@ class GFKernel(Kernel):
 
             elif msg['trees']:
                 dd = widgets.Dropdown(
+                    layout={'width': 'max-content'},
                     options=msg['trees'],
                     value=msg['trees'][0],
                     description='Tree of:',
