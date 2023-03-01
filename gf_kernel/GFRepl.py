@@ -18,14 +18,14 @@ class GFRepl:
         self.to_clean_up = ['.dot', '.png', '.gfo']
 
         self.pipe = os.pipe()
-        self.gf_shell = Popen((find_executable('gf'), '--run'),
+        self.gf_shell = Popen((find_executable('gf'), '--run', '--coding=utf8'),
                               stdin=PIPE,
                               stderr=self.pipe[1],
                               stdout=self.pipe[1],
                               text=True,
                               encoding='utf-8')
         self.commandcounter = 0
-        self.infile = os.fdopen(self.pipe[0])
+        self.infile = os.fdopen(self.pipe[0], encoding='utf-8')
 
         # catch any initial messages
         sep = self.write_separator()
