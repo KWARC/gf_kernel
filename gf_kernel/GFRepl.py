@@ -1,17 +1,16 @@
-import sys
-import os
-import signal
-import time
-import re
 import io
-
-from subprocess import PIPE, Popen
-from IPython.utils.tempdir import TemporaryDirectory
+import os
+import re
+import sys
 from distutils.spawn import find_executable
-from .utils import readFile, parse, parse_command, to_message_format, get_name
+from subprocess import PIPE, Popen
 
+from IPython.utils.tempdir import TemporaryDirectory
+
+from .utils import parse, parse_command, to_message_format
 
 COMMAND_SEPARATOR = "COMMAND_SEPARATOR===??!<>239'_"
+
 
 class GFRepl:
     def __init__(self):
@@ -20,10 +19,11 @@ class GFRepl:
 
         self.pipe = os.pipe()
         self.gf_shell = Popen((find_executable('gf'), '--run'),
-                          stdin = PIPE,
-                          stderr = self.pipe[1],
-                          stdout = self.pipe[1],
-                          text = True)
+                              stdin=PIPE,
+                              stderr=self.pipe[1],
+                              stdout=self.pipe[1],
+                              text=True,
+                              encoding='utf-8')
         self.commandcounter = 0
         self.infile = os.fdopen(self.pipe[0])
 
@@ -31,12 +31,12 @@ class GFRepl:
         sep = self.write_separator()
         self.gf_shell.stdin.flush()
         self.initialOutput = self.get_output(sep)
-        
+
         self.out_count = 0
 
     def do_shutdown(self):
         """Terminates the GF shell. """
-        self.gf_shell.communicate('q\n')[0]
+        self.gf_shell.communicate('q\n')
         self.gf_shell.stdin.close()
         self.gf_shell.kill()
 
@@ -82,20 +82,20 @@ class GFRepl:
                 os.remove(file)
 
         if removed:
-            s = map(lambda x: 'Removed: %s' % (x), removed)
+            s = map(lambda x: 'Removed: %s' % x, removed)
             return "\n".join(s)
         else:
             return "No files removed"
 
     def do_export(self, file_name):
         files = os.listdir(self.td.name)
-        file_reg = re.compile('^%s.gf$' % (file_name))
+        file_reg = re.compile('^%s.gf$' % file_name)
         for file in files:
             if file_reg.match(file):
                 from shutil import copy2
                 copy2(os.path.join(self.td.name, file), file)
-                return 'Exported %s' % (file)
-        return 'Could not find %s' % (file_name)
+                return 'Exported %s' % file
+        return 'Could not find %s' % file_name
 
     def handle_input(self, code):
         """Handles all kinds of user inputs"""
@@ -151,7 +151,7 @@ Stated grammars are automatically imported upon definiton.""" % (", ".join(self.
         out = self.handle_gf_command(
             "import %s.gf" % (os.path.join(self.td.name, name)))
         if not out:
-            out = "Defined %s" % (name)
+            out = "Defined %s" % name
         return out
 
     def handle_multiple_view(self, command):
@@ -181,8 +181,8 @@ Stated grammars are automatically imported upon definiton.""" % (", ".join(self.
         if not out:
             return "no file"
 
-        out_dot = os.path.join(self.td.name, 'out%s.dot' % (self.out_count))
-        out_png = os.path.join(self.td.name, 'out%s.png' % (self.out_count))
+        out_dot = os.path.join(self.td.name, 'out%s.dot' % self.out_count)
+        out_png = os.path.join(self.td.name, 'out%s.png' % self.out_count)
 
         with open(out_dot, 'w') as f:
             f.write(out)
@@ -193,7 +193,7 @@ Stated grammars are automatically imported upon definiton.""" % (", ".join(self.
             '-o', out_png
         ]
         p = Popen(DOT_ARGS, shell=False)
-        p.communicate()[0]
+        p.communicate()
         p.kill()
         self.out_count += 1
 
@@ -206,6 +206,7 @@ Stated grammars are automatically imported upon definiton.""" % (", ".join(self.
             # send input without the newline
             print(self.handle_gf_command(i[:-1]))
             i = sys.stdin.readline()
+
 
 if __name__ == '__main__':
     repl = GFRepl()
